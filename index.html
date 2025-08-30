@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>📅 Timetable — Now / Next</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { font-family: Arial, sans-serif; background:#f4f6fa; margin:0; padding:0; }
+    header { background:#5b4bff; color:white; padding:15px; font-size:20px; text-align:center; }
+    .wrap { max-width: 720px; margin: 0 auto; }
+    .card { background:white; margin:15px; padding:15px; border-radius:12px; box-shadow:0 2px 5px rgba(0,0,0,0.1); }
+    button { background:#5b4bff; color:white; padding:10px 15px; border:none; border-radius:8px; cursor:pointer; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; }
+    .row .card { flex:1 1 200px; }
+    .muted { color:#666; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>📅 My Timetable</header>
+  <div class="wrap">
+    <div class="row">
+      <div class="card" id="now">Loading current class...</div>
+      <div class="card" id="next">Loading next class...</div>
+    </div>
+    <div class="card" id="full">Loading full timetable...</div>
+
+    <div class="card">
+      <h3>Notifications</h3>
+      <p id="perm" class="muted">Permission: checking…</p>
+      <div class="row">
+        <button onclick="enableNotifications()">Enable Notifications</button>
+        <button onclick="testNotification()">Test Notification</button>
+      </div>
+      <p class="muted">You’ll get a ping <b>5 minutes before</b> and <b>at start time</b>. No repeats.</p>
+    </div>
+  </div>
+
+<script>
+const API_BASE = "http://127.0.0.1:8000";
+
+const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const pad = n => n.toString().padStart(2,"0");
+const todayName = () => DAYS[new Date().getDay()];
+function hmsToSeconds(h,m,s=0){return h*3600+m*60+s;}
+function timeStrToSeconds(t){const [h,m]=t.split(":").map(Number);return hmsToSeconds(h,m,0);}
+
+// --- UI load ---
+async function loadTimetable(){
+  try{
+    const res=await fetch(`${API_BASE}/timetable/${todayName()}`);
+    const data=await res.json();
+
+    document.getElementById("full").innerHTML="<h3>Today's Full Timetable</h3><ul>"+data.map(c=>`<li>${c[0]} - ${c[1]} — ${c[2]}</li>`).join("")+"</ul>";
+
+    const now=new Date();const nowMin=now.getHours()*60+now.getMinutes();
+    let nowClass="No class right now 🎉",nextClass="None";
+
+    for(let i=0;i<data.length;i++){
+      const [start,end,sub]=data[i];
+      const [sh,sm]=start.split(":").map(Number);
+      const [eh,em]=end.split(":").map(Number);
+      const startM=sh*60+sm,endM=eh*60+em;
+
+      if(nowMin>=startM && nowMin<endM){
+        nowClass=`${sub} (${start} - ${end})`;
+        nextClass=data[i+1]?`${data[i+1][2]} (${data[i+1][0]} - ${data[i+1][1]})`:"Done for today 🎉";
+        break;
+      }
+      if(nowMin<startM && nextClass==="None"){nextClass=`${sub} (${start} - ${end})`;}
+    }
+
+    document.getElementById("now").innerHTML="<h3>Now</h3>"+nowClass;
+    document.getElementById("next").innerHTML="<h3>Next</h3>"+nextClass;
+  }catch(e){
+    document.getElementById("full").innerHTML=`<p style="color:#c00">Error contacting backend at ${API_BASE}</p>`;
+  }
+}
+loadTimetable();setInterval(loadTimetable,60000);
+
+// --- Notifications ---
+let notifyTimer=null;
+function setPermText(){document.getElementById("perm").textContent=`Permission: ${Notification.permission}`;}
+setPermText();
+
+function enableNotifications(){
+  if(!("Notification"in window)){alert("Your browser does not support Notifications.");return;}
+  if(Notification.permission==="granted"){startNotifications();}
+  else if(Notification.permission!=="denied"){
+    Notification.requestPermission().then(p=>{setPermText();if(p==="granted")startNotifications();});
+  }else{alert("Notifications are blocked. Enable them in your browser site settings.");}
+}
+
+function startNotifications(){checkNotifications();if(notifyTimer)clearInterval(notifyTimer);notifyTimer=setInterval(checkNotifications,15000);}
+
+function notifiedSet(){
+  const key="notified_"+new Date().toISOString().split("T")[0];
+  const set=new Set(JSON.parse(localStorage.getItem(key)||"[]"));
+  return{has:k=>set.has(k),add:k=>{set.add(k);localStorage.setItem(key,JSON.stringify([...set]));}};
+}
+
+async function checkNotifications(){
+  try{
+    const res=await fetch(`${API_BASE}/timetable/${todayName()}`);
+    const data=await res.json();
+    const d=new Date();const nowSec=hmsToSeconds(d.getHours(),d.getMinutes(),d.getSeconds());
+    const store=notifiedSet();
+
+    for(const [start,end,sub] of data){
+      const startSec=timeStrToSeconds(start);
+
+      if(nowSec>=startSec-300 && nowSec<startSec-240){
+        const key=`${start}|${sub}|pre5`;
+        if(!store.has(key)){new Notification("Upcoming Class ⏰",{body:`${sub} starts at ${start}`});store.add(key);}
+      }
+
+      if(nowSec>=startSec && nowSec<startSec+60){
+        const key=`${start}|${sub}|start`;
+        if(!store.has(key)){new Notification("Class Started 🎓",{body:`${sub} is starting now (${start})`});store.add(key);}
+      }
+    }
+  }catch(e){}
+}
+
+function testNotification(){
+  if(Notification.permission==="granted"){new Notification("✅ Test Notification",{body:"Notifications are working!"});}
+  else{enableNotifications();}
+}
+</script>
+</body>
+</html>
